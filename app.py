@@ -136,7 +136,7 @@ def calcular_prediccion(semanal, semanas_futuras=4):
     return pred_df, modelo.coef_[0]
 
 # ============================================================
-# KPIs
+# KPIs (CORREGIDO: tendencia como banner de ancho completo)
 # ============================================================
 
 def mostrar_kpis(df, semanal, prediccion_info):
@@ -145,23 +145,24 @@ def mostrar_kpis(df, semanal, prediccion_info):
     pct_negativas = (df['rating'] <= 2).mean() * 100
     sentimiento_actual = semanal['sentimiento'].iloc[-1] if len(semanal) else np.nan
 
-    if prediccion_info:
-        _, pendiente = prediccion_info
-        if pendiente > 0.001:
-            tendencia = "📈 Mejorando"
-        elif pendiente < -0.001:
-            tendencia = "📉 Deteriorando"
-        else:
-            tendencia = "➖ Estable"
-    else:
-        tendencia = "— Sin datos suficientes"
-
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total reseñas", f"{total:,}")
     c2.metric("Rating promedio", f"{rating_prom:.2f} ★")
     c3.metric("% Reseñas negativas", f"{pct_negativas:.1f}%")
     c4.metric("Sentimiento actual", f"{sentimiento_actual:.2f}")
-    c5.metric("Tendencia proyectada", tendencia)
+
+    st.write("")
+
+    if prediccion_info:
+        _, pendiente = prediccion_info
+        if pendiente > 0.001:
+            st.success("📈 **Tendencia proyectada: Mejorando** — el sentimiento muestra una pendiente positiva en las próximas semanas.")
+        elif pendiente < -0.001:
+            st.error("📉 **Tendencia proyectada: Deteriorando** — el sentimiento muestra una pendiente negativa. Vale la pena investigar la causa.")
+        else:
+            st.info("➡️ **Tendencia proyectada: Estable** — sin cambios significativos esperados en el corto plazo.")
+    else:
+        st.info("No hay suficientes semanas de datos (mínimo 5) para proyectar una tendencia.")
 
 # ============================================================
 # PESTAÑAS

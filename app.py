@@ -83,14 +83,20 @@ def secuencia_colores(p, n=8):
 def escala_divergente(p):
     return [[0, p['negativo']], [0.5, p['neutro']], [1, p['positivo']]]
 
+def hex_a_rgba(hex_color, alpha=0.2):
+    hex_color = hex_color.lstrip('#')
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
 def aplicar_layout_grafico(fig, p):
     fig.update_layout(
         plot_bgcolor=p['fondo'], paper_bgcolor=p['fondo'],
         font_color=p['texto_principal'],
         legend=dict(font=dict(color=p['texto_principal'])),
     )
-    fig.update_xaxes(gridcolor=f"{p['neutro']}33", color=p['texto_principal'])
-    fig.update_yaxes(gridcolor=f"{p['neutro']}33", color=p['texto_principal'])
+    grid_color = hex_a_rgba(p['neutro'], 0.25)
+    fig.update_xaxes(gridcolor=grid_color, color=p['texto_principal'])
+    fig.update_yaxes(gridcolor=grid_color, color=p['texto_principal'])
     return fig
 
 # ============================================================
@@ -501,3 +507,4 @@ else:
         st.info("⬅️ Sube un archivo CSV, mapea las columnas y presiona 'Procesar y analizar'.")
     else:
         render_dashboard(df_final, paleta_activa)
+   

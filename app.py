@@ -429,7 +429,7 @@ def render_dashboard(df, p):
 
 col_logo, col_titulo = st.sidebar.columns([1, 3])
 with col_logo:
-    st.image("logo_predictify_64.png", width=45)
+    st.image("icono2_solo.png", width=45)
 with col_titulo:
     st.markdown("### Predictify")
 st.sidebar.caption("Radar de Reputación de Producto")

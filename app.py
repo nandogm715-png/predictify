@@ -4,7 +4,7 @@ import numpy as np
 import re
 import plotly.express as px
 
-st.set_page_config(page_title="Predictify — Radar de Reputación", layout="wide")
+st.set_page_config(page_title="Predictify — Radar de Reputación", page_icon="logo_predictify_64.png", layout="wide")
 
 # ============================================================
 # PALETAS DE COLOR
@@ -421,7 +421,11 @@ def render_dashboard(df, p):
 # BARRA LATERAL
 # ============================================================
 
-st.sidebar.title("📊 Predictify")
+col_logo, col_titulo = st.sidebar.columns([1, 3])
+with col_logo:
+    st.image("logo_predictify_64.png", width=45)
+with col_titulo:
+    st.markdown("### Predictify")
 st.sidebar.caption("Radar de Reputación de Producto")
 st.sidebar.divider()
 

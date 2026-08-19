@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import re
+import plotly.express as px
 
 st.set_page_config(page_title="Predictify — Radar de Reputación", layout="wide")
 
 # ============================================================
-# FUNCIONES DEL PIPELINE
+# ESQUEMA ESTÁNDAR INTERNO: fecha, rating, texto, entidad
 # ============================================================
 
 @st.cache_resource
@@ -36,40 +38,42 @@ def sugerir_columna(df, palabras_clave, tipo_esperado=None):
                     return col
     return columnas[0] if columnas else None
 
-def limpiar_dataset_inteligente(df, col_fecha, col_rating, col_texto):
+def mapear_a_esquema_estandar(df, col_fecha, col_rating, col_texto, col_entidad):
+    estandar = pd.DataFrame()
+    estandar['fecha'] = pd.to_datetime(df[col_fecha], errors='coerce', format='mixed')
+    estandar['rating'] = pd.to_numeric(df[col_rating], errors='coerce')
+    estandar['texto'] = df[col_texto].astype(str)
+    estandar['entidad'] = df[col_entidad].astype(str) if col_entidad else 'General'
+    return estandar
+
+def limpiar_dataset_inteligente(df):
     reporte = []
     df = df.copy()
     filas_inicial = len(df)
 
-    fechas = pd.to_datetime(df[col_fecha], errors='coerce', format='mixed')
-    reporte.append(f"Fechas reconocidas correctamente: {fechas.notna().mean():.0%}")
-    df['_fecha_limpia'] = fechas
+    reporte.append(f"Fechas reconocidas correctamente: {df['fecha'].notna().mean():.0%}")
 
-    rating_num = pd.to_numeric(df[col_rating], errors='coerce')
-    if rating_num.notna().sum() > 0:
-        max_rating = rating_num.max()
+    if df['rating'].notna().sum() > 0:
+        max_rating = df['rating'].max()
         if max_rating > 5:
-            rating_num = (rating_num / max_rating) * 5
+            df['rating'] = (df['rating'] / max_rating) * 5
             reporte.append(f"Rating detectado en escala 0-{int(max_rating)}, normalizado a escala 1-5")
-    df['_rating_limpio'] = rating_num
 
-    texto_col = df[col_texto].astype(str)
-    pct_texto_unico = texto_col.nunique() / max(len(texto_col), 1)
+    pct_texto_unico = df['texto'].nunique() / max(len(df), 1)
     if pct_texto_unico < 0.3:
         reporte.append(
-            f"⚠️ Advertencia: solo {pct_texto_unico:.0%} del texto en '{col_texto}' es único — "
-            f"puede que NO sea el texto real de la reseña."
+            f"⚠️ Advertencia: solo {pct_texto_unico:.0%} del texto es único — puede que la columna elegida no sea la reseña real."
         )
-    df['_texto_limpio'] = texto_col.str.strip().replace('nan', '')
+    df['texto'] = df['texto'].str.strip().replace('nan', '')
 
     antes = len(df)
-    df = df.dropna(subset=['_fecha_limpia', '_rating_limpio'])
-    df = df[df['_texto_limpio'].str.len() > 3]
+    df = df.dropna(subset=['fecha', 'rating'])
+    df = df[df['texto'].str.len() > 3]
     if antes - len(df) > 0:
         reporte.append(f"Se eliminaron {antes - len(df)} filas sin fecha/rating válido o texto vacío")
 
     antes = len(df)
-    df = df.drop_duplicates(subset=['_texto_limpio'])
+    df = df.drop_duplicates(subset=['texto'])
     if antes - len(df) > 0:
         reporte.append(f"Se eliminaron {antes - len(df)} reseñas duplicadas (texto idéntico)")
 
@@ -77,70 +81,231 @@ def limpiar_dataset_inteligente(df, col_fecha, col_rating, col_texto):
     return df, reporte
 
 @st.cache_data(show_spinner=False)
-def analizar(df, col_fecha, col_rating, col_texto):
+def calcular_sentimiento(df):
     from textblob import TextBlob
-    from sklearn.feature_extraction.text import CountVectorizer
-    from sklearn.linear_model import LinearRegression
-    import numpy as np
-
     stop_words = cargar_stopwords()
-    df = df.dropna(subset=[col_fecha, col_rating, col_texto]).copy()
-    df['fecha'] = pd.to_datetime(df[col_fecha], errors='coerce')
-    df = df.dropna(subset=['fecha'])
-    df['texto_limpio'] = df[col_texto].apply(lambda t: limpiar_texto(t, stop_words))
+    df = df.copy()
+    df['texto_limpio'] = df['texto'].apply(lambda t: limpiar_texto(t, stop_words))
     df['sentimiento'] = df['texto_limpio'].apply(lambda t: TextBlob(t).sentiment.polarity)
+    return df
 
-    semanal = df.groupby(df['fecha'].dt.to_period('W'))['sentimiento'].mean().reset_index()
-    semanal['semana_num'] = range(len(semanal))
+@st.cache_data(show_spinner=False)
+def calcular_temas(df, min_negativas=5, max_temas=15):
+    from sklearn.feature_extraction.text import CountVectorizer
+    negativas = df[df['rating'] <= 2]
+    if len(negativas) < min_negativas:
+        return pd.DataFrame(columns=['termino', 'frecuencia', 'sentimiento_promedio'])
 
-    negativas = df[df[col_rating] <= 2]['texto_limpio']
-    top_temas = []
-    if len(negativas) >= 5:
-        vec = CountVectorizer(max_features=15, ngram_range=(1, 2))
-        vec.fit_transform(negativas)
-        top_temas = list(vec.get_feature_names_out())
+    vec = CountVectorizer(max_features=max_temas, ngram_range=(1, 2))
+    matriz = vec.fit_transform(negativas['texto_limpio'])
+    terminos = vec.get_feature_names_out()
+    frecuencias = matriz.sum(axis=0).A1
 
-    prediccion = None
-    if len(semanal) >= 5:
-        X = semanal[['semana_num']]
-        y = semanal['sentimiento']
-        modelo = LinearRegression().fit(X, y)
-        proximas = np.array([[semanal['semana_num'].max() + i] for i in range(1, 5)])
-        prediccion = pd.DataFrame({
-            'semana_num': proximas.flatten(),
-            'sentimiento_predicho': modelo.predict(proximas)
+    filas = []
+    for termino, freq in zip(terminos, frecuencias):
+        mask = negativas['texto_limpio'].str.contains(termino, regex=False)
+        filas.append({
+            'termino': termino,
+            'frecuencia': int(freq),
+            'sentimiento_promedio': negativas.loc[mask, 'sentimiento'].mean()
         })
+    return pd.DataFrame(filas).sort_values('frecuencia', ascending=False)
 
-    return semanal, top_temas, prediccion, len(df)
+@st.cache_data(show_spinner=False)
+def calcular_tendencia_semanal(df):
+    semanal = df.groupby(df['fecha'].dt.to_period('W'))['sentimiento'].agg(['mean', 'count']).reset_index()
+    semanal.columns = ['periodo', 'sentimiento', 'n_reseñas']
+    semanal['fecha'] = semanal['periodo'].dt.start_time
+    semanal['semana_num'] = range(len(semanal))
+    return semanal
 
-def mostrar_resultados(semanal, top_temas, prediccion, total_filas):
-    st.success(f"Análisis completado sobre {total_filas} reseñas.")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Evolución del sentimiento")
-        st.line_chart(semanal.set_index("semana_num")["sentimiento"])
-
-    with col2:
-        st.subheader("Top temas de queja")
-        if top_temas:
-            st.table(pd.DataFrame({"término": top_temas}))
-        else:
-            st.info("No hay suficientes reseñas negativas (mínimo 5) para detectar temas.")
-
-    if prediccion is not None:
-        st.subheader("Proyección próximas 4 semanas")
-        st.line_chart(prediccion.set_index("semana_num")["sentimiento_predicho"])
-        pendiente = prediccion["sentimiento_predicho"].iloc[-1] - semanal["sentimiento"].iloc[-1]
-        if pendiente < -0.05:
-            st.error("⚠️ Alerta: tendencia a la baja en el sentimiento proyectado")
-        else:
-            st.success("✅ Sentimiento estable, sin señales de alerta")
-    else:
-        st.info("No hay suficientes semanas de datos (mínimo 5) para proyectar una tendencia.")
+@st.cache_data(show_spinner=False)
+def calcular_prediccion(semanal, semanas_futuras=4):
+    from sklearn.linear_model import LinearRegression
+    if len(semanal) < 5:
+        return None
+    X = semanal[['semana_num']]
+    y = semanal['sentimiento']
+    modelo = LinearRegression().fit(X, y)
+    ultimo_num = semanal['semana_num'].max()
+    ultima_fecha = semanal['fecha'].max()
+    proximas_num = np.array([[ultimo_num + i] for i in range(1, semanas_futuras + 1)])
+    proximas_fechas = [ultima_fecha + pd.Timedelta(weeks=i) for i in range(1, semanas_futuras + 1)]
+    pred = modelo.predict(proximas_num)
+    pred_df = pd.DataFrame({'semana_num': proximas_num.flatten(), 'fecha': proximas_fechas, 'sentimiento_predicho': pred})
+    return pred_df, modelo.coef_[0]
 
 # ============================================================
-# BARRA LATERAL — nombre de la app + controles PRIMERO
+# KPIs
+# ============================================================
+
+def mostrar_kpis(df, semanal, prediccion_info):
+    total = len(df)
+    rating_prom = df['rating'].mean()
+    pct_negativas = (df['rating'] <= 2).mean() * 100
+    sentimiento_actual = semanal['sentimiento'].iloc[-1] if len(semanal) else np.nan
+
+    if prediccion_info:
+        _, pendiente = prediccion_info
+        if pendiente > 0.001:
+            tendencia = "📈 Mejorando"
+        elif pendiente < -0.001:
+            tendencia = "📉 Deteriorando"
+        else:
+            tendencia = "➖ Estable"
+    else:
+        tendencia = "— Sin datos suficientes"
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total reseñas", f"{total:,}")
+    c2.metric("Rating promedio", f"{rating_prom:.2f} ★")
+    c3.metric("% Reseñas negativas", f"{pct_negativas:.1f}%")
+    c4.metric("Sentimiento actual", f"{sentimiento_actual:.2f}")
+    c5.metric("Tendencia proyectada", tendencia)
+
+# ============================================================
+# PESTAÑAS
+# ============================================================
+
+def tab_tendencias(df, semanal, prediccion_info):
+    st.subheader("Evolución del sentimiento en el tiempo")
+    entidades = sorted(df['entidad'].unique())
+    seleccion = st.multiselect("Filtrar por entidad/producto", entidades,
+                                default=entidades[:3] if len(entidades) > 3 else entidades, key="tend_filtro")
+
+    df_f = df[df['entidad'].isin(seleccion)] if seleccion else df
+    semanal_ent = df_f.groupby([df_f['fecha'].dt.to_period('W'), 'entidad'])['sentimiento'].mean().reset_index()
+    semanal_ent.columns = ['periodo', 'entidad', 'sentimiento']
+    semanal_ent['fecha'] = semanal_ent['periodo'].dt.start_time
+
+    titulo = ', '.join(seleccion) if len(seleccion) <= 3 else f"{len(seleccion)} entidades"
+    fig = px.line(semanal_ent, x='fecha', y='sentimiento', color='entidad', markers=True,
+                  title=f"Sentimiento promedio semanal — {titulo}",
+                  labels={'fecha': 'Semana', 'sentimiento': 'Sentimiento promedio', 'entidad': 'Producto/Empresa'})
+    fig.add_hline(y=0, line_dash="dot", line_color="gray")
+
+    if prediccion_info:
+        pred_df, _ = prediccion_info
+        fig.add_scatter(x=pred_df['fecha'], y=pred_df['sentimiento_predicho'], mode='lines+markers',
+                        name='Proyección (general)', line=dict(dash='dash', color='red'))
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("💡 La línea punteada roja es la proyección del modelo sobre el conjunto general, no solo lo filtrado.")
+
+    st.subheader("Volumen de reseñas por semana")
+    fig_vol = px.bar(semanal, x='fecha', y='n_reseñas', title="Cantidad de reseñas por semana (conjunto completo)")
+    st.plotly_chart(fig_vol, use_container_width=True)
+    st.caption("💡 Semanas con muy pocas reseñas pueden generar señales de sentimiento poco confiables.")
+
+
+def tab_distribuciones(df):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Distribución de ratings")
+        fig = px.histogram(df, x='rating', nbins=5, title="Cantidad de reseñas por rating")
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        st.subheader("Distribución de sentimiento")
+        fig = px.histogram(df, x='sentimiento', nbins=30, title="Distribución del puntaje de sentimiento")
+        fig.add_vline(x=0, line_dash="dot", line_color="gray")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Longitud del texto según rating")
+    df_plot = df.copy()
+    df_plot['longitud_texto'] = df_plot['texto'].str.len()
+    fig = px.box(df_plot, x='rating', y='longitud_texto', title="Longitud del texto de reseña por rating")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("💡 Si las reseñas negativas son más largas, sugiere que los clientes insatisfechos dan más contexto.")
+
+
+def tab_correlaciones(df):
+    st.subheader("Rating vs. sentimiento del texto")
+    df_plot = df.copy()
+    df_plot['rating_str'] = df_plot['rating'].round().astype(int).astype(str)
+    fig = px.box(df_plot, x='rating_str', y='sentimiento', color='rating_str',
+                title="Distribución del sentimiento del texto según el rating dado",
+                labels={'rating_str': 'Rating', 'sentimiento': 'Sentimiento del texto'})
+    fig.add_hline(y=0, line_dash="dot", line_color="gray")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("💡 Cajas que se superponen entre ratings revelan discrepancias entre lo calificado y lo escrito.")
+
+    corr = df['rating'].corr(df['sentimiento'])
+    st.metric("Correlación rating ↔ sentimiento", f"{corr:.2f}",
+              help="1 = coinciden perfectamente. 0 = no hay relación.")
+
+    st.subheader("Volumen de reseñas vs. sentimiento promedio (por semana)")
+    semanal = calcular_tendencia_semanal(df)
+    fig2 = px.scatter(semanal, x='n_reseñas', y='sentimiento', size='n_reseñas',
+                      title="¿El volumen de reseñas se relaciona con el sentimiento de esa semana?")
+    st.plotly_chart(fig2, use_container_width=True)
+
+
+def tab_temas(temas_df):
+    st.subheader("Temas de queja más frecuentes (en reseñas negativas)")
+    if temas_df.empty:
+        st.info("No hay suficientes reseñas negativas para detectar temas (mínimo 5).")
+        return
+
+    fig = px.bar(temas_df.sort_values('frecuencia'), x='frecuencia', y='termino', orientation='h',
+                color='sentimiento_promedio', color_continuous_scale='RdYlGn',
+                title="Frecuencia de términos en quejas, coloreado por su sentimiento promedio")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("💡 Rojo = el término aparece en reseñas con sentimiento más negativo dentro del grupo de quejas.")
+    st.dataframe(temas_df, use_container_width=True, hide_index=True)
+
+
+def tab_comparativa(df):
+    top_entidades = df['entidad'].value_counts().head(15).index.tolist()
+    seleccion = st.multiselect("Compara entidades/productos", top_entidades,
+                                default=top_entidades[:3] if len(top_entidades) >= 3 else top_entidades,
+                                key="comp_filtro")
+    if not seleccion:
+        st.info("Selecciona al menos una entidad para comparar.")
+        return
+
+    resumen = df[df['entidad'].isin(seleccion)].groupby('entidad').agg(
+        reseñas=('rating', 'count'),
+        rating_promedio=('rating', 'mean'),
+        sentimiento_promedio=('sentimiento', 'mean'),
+        pct_negativas=('rating', lambda x: (x <= 2).mean() * 100)
+    ).reset_index()
+
+    st.dataframe(resumen.style.format({
+        'rating_promedio': '{:.2f}', 'sentimiento_promedio': '{:.2f}', 'pct_negativas': '{:.1f}%'
+    }), use_container_width=True, hide_index=True)
+
+    fig = px.bar(resumen, x='entidad', y='pct_negativas', color='sentimiento_promedio',
+                color_continuous_scale='RdYlGn', title="% de reseñas negativas por entidad")
+    st.plotly_chart(fig, use_container_width=True)
+
+    df_comp = df[df['entidad'].isin(seleccion)]
+    semanal_comp = df_comp.groupby([df_comp['fecha'].dt.to_period('W'), 'entidad'])['sentimiento'].mean().reset_index()
+    semanal_comp.columns = ['periodo', 'entidad', 'sentimiento']
+    semanal_comp['fecha'] = semanal_comp['periodo'].dt.start_time
+    fig2 = px.line(semanal_comp, x='fecha', y='sentimiento', color='entidad', markers=True,
+                  title="Evolución de sentimiento — comparación entre entidades")
+    st.plotly_chart(fig2, use_container_width=True)
+
+
+def render_dashboard(df):
+    semanal = calcular_tendencia_semanal(df)
+    prediccion_info = calcular_prediccion(semanal)
+    temas_df = calcular_temas(df)
+
+    mostrar_kpis(df, semanal, prediccion_info)
+    st.divider()
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 Tendencias", "📊 Distribuciones", "🔗 Correlaciones", "💬 Temas de queja", "⚖️ Comparativa"
+    ])
+    with tab1: tab_tendencias(df, semanal, prediccion_info)
+    with tab2: tab_distribuciones(df)
+    with tab3: tab_correlaciones(df)
+    with tab4: tab_temas(temas_df)
+    with tab5: tab_comparativa(df)
+
+# ============================================================
+# BARRA LATERAL
 # ============================================================
 
 st.sidebar.title("📊 Predictify")
@@ -149,120 +314,68 @@ st.sidebar.divider()
 
 modo = st.sidebar.radio("¿Qué quieres ver?", ["Ejemplo (Fire Tablet / Echo)", "Subir mi propio archivo"])
 
-archivo = None
-df_nuevo = None
-col_fecha = col_rating = col_texto = col_producto = None
-productos_seleccionados = None
-usar_filtro_fecha = False
-fecha_inicio = fecha_fin = None
-analizar_click = False
+df_final = None
 
-if modo == "Subir mi propio archivo":
-    st.sidebar.divider()
+if modo == "Ejemplo (Fire Tablet / Echo)":
+    df_final = pd.read_csv("datos_ejemplo.csv")
+    df_final['fecha'] = pd.to_datetime(df_final['fecha'])
+
+else:
     st.sidebar.subheader("1. Sube tu archivo")
     archivo = st.sidebar.file_uploader("Archivo CSV", type="csv")
 
     if archivo:
         df_nuevo = pd.read_csv(archivo, low_memory=False)
 
-        st.sidebar.subheader("2. Columnas")
+        st.sidebar.subheader("2. Mapeo de columnas")
         sug_fecha = sugerir_columna(df_nuevo, ['date', 'fecha', 'time', 'reviewed'], 'fecha')
         sug_rating = sugerir_columna(df_nuevo, ['rating', 'star', 'score', 'calif'], 'numerico')
         sug_texto = sugerir_columna(df_nuevo, ['review', 'text', 'comment', 'body', 'reseña'])
 
         columnas = list(df_nuevo.columns)
-        col_fecha = st.sidebar.selectbox("Fecha", columnas,
-                                          index=columnas.index(sug_fecha) if sug_fecha in columnas else 0)
-        col_rating = st.sidebar.selectbox("Rating", columnas,
-                                           index=columnas.index(sug_rating) if sug_rating in columnas else 0)
-        col_texto = st.sidebar.selectbox("Texto de reseña", columnas,
-                                          index=columnas.index(sug_texto) if sug_texto in columnas else 0)
-        opciones_producto = ["(Analizar todo, sin segmentar)"] + columnas
-        col_producto = st.sidebar.selectbox("Producto (opcional)", opciones_producto)
+        col_fecha = st.sidebar.selectbox("Fecha", columnas, index=columnas.index(sug_fecha) if sug_fecha in columnas else 0)
+        col_rating = st.sidebar.selectbox("Rating", columnas, index=columnas.index(sug_rating) if sug_rating in columnas else 0)
+        col_texto = st.sidebar.selectbox("Texto de reseña", columnas, index=columnas.index(sug_texto) if sug_texto in columnas else 0)
+        opciones_entidad = ["(Sin segmentar — 'General')"] + columnas
+        col_entidad_sel = st.sidebar.selectbox("Producto / Empresa (opcional)", opciones_entidad)
+        col_entidad = col_entidad_sel if col_entidad_sel != "(Sin segmentar — 'General')" else None
         st.sidebar.caption("💡 Sugeridas automáticamente — verifica que tengan sentido.")
 
-        st.sidebar.subheader("3. Segmentación")
-        if col_producto != "(Analizar todo, sin segmentar)":
-            top_productos = df_nuevo[col_producto].value_counts().head(15).index.tolist()
-            productos_seleccionados = st.sidebar.multiselect(
-                "¿Qué producto(s) comparar?",
-                options=top_productos,
-                default=top_productos[:2] if len(top_productos) >= 2 else top_productos,
-            )
+        if len({col_fecha, col_rating, col_texto}) < 3:
+            st.sidebar.error("⚠️ Elige 3 columnas distintas para fecha, rating y texto.")
+        else:
+            st.sidebar.subheader("3. Analizar")
+            if st.sidebar.button("🔍 Procesar y analizar", use_container_width=True):
+                with st.spinner("Mapeando, limpiando y analizando..."):
+                    df_estandar = mapear_a_esquema_estandar(df_nuevo, col_fecha, col_rating, col_texto, col_entidad)
+                    df_limpio, reporte = limpiar_dataset_inteligente(df_estandar)
+                    st.session_state['reporte_limpieza'] = reporte
 
-        usar_filtro_fecha = st.sidebar.checkbox("Filtrar por rango de fechas")
-        if usar_filtro_fecha:
-            fechas_preview = pd.to_datetime(df_nuevo[col_fecha], errors='coerce', format='mixed').dropna()
-            if len(fechas_preview) > 0:
-                fmin, fmax = fechas_preview.min().date(), fechas_preview.max().date()
-                fecha_inicio, fecha_fin = st.sidebar.slider("Rango de fechas", min_value=fmin, max_value=fmax, value=(fmin, fmax))
+                    if len(df_limpio) < 5:
+                        st.warning("Quedan muy pocas filas después de limpiar. Revisa las columnas seleccionadas.")
+                        st.session_state['df_procesado'] = None
+                    else:
+                        st.session_state['df_procesado'] = calcular_sentimiento(df_limpio)
 
-        st.sidebar.subheader("4. Analizar")
-        analizar_click = st.sidebar.button("🔍 Analizar", use_container_width=True)
+    if st.session_state.get('df_procesado') is not None:
+        df_final = st.session_state['df_procesado']
 
 # ============================================================
-# ÁREA PRINCIPAL — resultados
+# ÁREA PRINCIPAL
 # ============================================================
 
 st.title("📊 Predictify")
 st.caption("Radar de Reputación de Producto con Predicción Temprana")
 
 if modo == "Ejemplo (Fire Tablet / Echo)":
-    semanal = pd.read_csv("semanal_sentimiento.csv")
-    temas_df = pd.read_csv("top_temas.csv")
-    prediccion = pd.read_csv("prediccion.csv")
-    st.info("Mostrando el análisis precargado de Fire Tablet y Echo (Amazon Consumer Reviews).")
-    mostrar_resultados(semanal, list(temas_df["termino"]), prediccion, 14272)
-
+    st.info("Mostrando el dataset de ejemplo — Fire Tablet y Echo (Amazon Consumer Reviews).")
+    render_dashboard(df_final)
 else:
-    if not archivo:
-        st.info("⬅️ Sube un archivo CSV desde la barra lateral para comenzar.")
+    if 'reporte_limpieza' in st.session_state:
+        with st.expander("🧹 Reporte de limpieza"):
+            for linea in st.session_state['reporte_limpieza']:
+                st.write("•", linea)
+    if df_final is None:
+        st.info("⬅️ Sube un archivo CSV, mapea las columnas y presiona 'Procesar y analizar'.")
     else:
-        st.write("Vista previa del archivo:", df_nuevo.head())
-
-        if len({col_fecha, col_rating, col_texto}) < 3:
-            st.error("⚠️ Elige 3 columnas distintas para fecha, rating y texto — no pueden repetirse.")
-        elif analizar_click:
-            with st.spinner("Limpiando y procesando datos..."):
-                try:
-                    df_trabajo = df_nuevo.copy()
-
-                    if productos_seleccionados:
-                        df_trabajo = df_trabajo[df_trabajo[col_producto].isin(productos_seleccionados)]
-                    if usar_filtro_fecha and fecha_inicio and fecha_fin:
-                        fechas_dt = pd.to_datetime(df_trabajo[col_fecha], errors='coerce', format='mixed')
-                        df_trabajo = df_trabajo[(fechas_dt.dt.date >= fecha_inicio) & (fechas_dt.dt.date <= fecha_fin)]
-
-                    if len(df_trabajo) == 0:
-                        st.warning("No quedan reseñas después de aplicar los filtros.")
-                    else:
-                        df_limpio, reporte_limpieza = limpiar_dataset_inteligente(df_trabajo, col_fecha, col_rating, col_texto)
-
-                        with st.expander("🧹 Reporte de limpieza"):
-                            for linea in reporte_limpieza:
-                                st.write("•", linea)
-
-                        if len(df_limpio) < 5:
-                            st.warning("Quedan muy pocas filas después de limpiar. Revisa columnas o filtros.")
-                        else:
-                            semanal, top_temas, prediccion, total = analizar(
-                                df_limpio, '_fecha_limpia', '_rating_limpio', '_texto_limpio'
-                            )
-
-                            if len(semanal) == 0:
-                                st.error("No se pudieron procesar fechas válidas después de la limpieza.")
-                            else:
-                                if productos_seleccionados and len(productos_seleccionados) > 1:
-                                    st.subheader("Comparación de sentimiento entre productos seleccionados")
-                                    comparacion = df_limpio.copy()
-                                    comparacion['semana'] = comparacion['_fecha_limpia'].dt.to_period('W').astype(str)
-                                    from textblob import TextBlob
-                                    comparacion['sentimiento_cmp'] = comparacion['_texto_limpio'].apply(lambda t: TextBlob(t).sentiment.polarity)
-                                    tabla_comparacion = comparacion.groupby(['semana', col_producto])['sentimiento_cmp'].mean().unstack()
-                                    st.line_chart(tabla_comparacion)
-
-                                mostrar_resultados(semanal, top_temas, prediccion, total)
-                except Exception as e:
-                    st.error(f"Ocurrió un error al procesar el archivo: {e}")
-        else:
-            st.info("Configura las columnas en la barra lateral y presiona '🔍 Analizar'.")
+        render_dashboard(df_final)

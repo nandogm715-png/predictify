@@ -46,6 +46,9 @@ else:
         with col4:
             opciones_producto = ["(Analizar todo, sin segmentar)"] + list(df_nuevo.columns)
             col_producto = st.selectbox("Columna de producto (opcional)", opciones_producto)
+            if len({col_fecha, col_rating, col_texto}) < 3:
+    st.error("⚠️ Debes elegir 3 columnas distintas para fecha, rating y texto — no pueden repetirse.")
+    st.stop()
 
         # --- Segmentación por producto ---
         productos_seleccionados = None

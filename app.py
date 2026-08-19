@@ -215,13 +215,27 @@ def calcular_temas(df, min_negativas=5, max_temas=15):
     terminos = vec.get_feature_names_out()
     frecuencias = matriz.sum(axis=0).A1
 
+    def clasificar_satisfaccion(sentimiento):
+        if pd.isna(sentimiento):
+            return "—"
+        elif sentimiento >= 0.2:
+            return "😊 Muy satisfecho"
+        elif sentimiento >= 0:
+            return "🙂 Satisfecho"
+        elif sentimiento >= -0.3:
+            return "😐 Poco satisfecho"
+        else:
+            return "☹️ Insatisfecho"
+
     filas = []
     for termino, freq in zip(terminos, frecuencias):
         mask = negativas['texto_limpio'].str.contains(termino, regex=False)
+        sentimiento_prom = negativas.loc[mask, 'sentimiento'].mean()
         filas.append({
             'termino': termino,
             'frecuencia': int(freq),
-            'sentimiento_promedio': negativas.loc[mask, 'sentimiento'].mean()
+            'sentimiento_promedio': sentimiento_prom,
+            'satisfaccion': clasificar_satisfaccion(sentimiento_prom)
         })
     return pd.DataFrame(filas).sort_values('frecuencia', ascending=False)
 
@@ -543,4 +557,4 @@ else:
         st.info("⬅️ Sube un archivo CSV, mapea las columnas y presiona 'Procesar y analizar'.")
     else:
         mostrar_vista_previa(df_final)
-        render_dashboard(df_final, paleta_activa)   
+        render_dashboard(df_final, paleta_activa)

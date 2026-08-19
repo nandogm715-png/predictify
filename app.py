@@ -4,7 +4,7 @@ import numpy as np
 import re
 import plotly.express as px
 
-st.set_page_config(page_title="Predictify — Radar de Reputación", page_icon="logo_predictify_64.png", layout="wide")
+st.set_page_config(page_title="Predictify — Radar de Reputación", page_icon="icono2_solo.png", layout="wide")
 
 # ============================================================
 # PALETAS DE COLOR

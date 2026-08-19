@@ -99,6 +99,27 @@ def aplicar_layout_grafico(fig, p):
     fig.update_yaxes(gridcolor=grid_color, color=p['texto_principal'])
     return fig
 
+def generar_plantilla_csv():
+    plantilla = pd.DataFrame({
+        'fecha': ['2024-01-15', '2024-01-16', '2024-01-20', '2024-01-22'],
+        'rating': [5, 2, 4, 1],
+        'texto': [
+            'Excelente producto, funciona perfecto y llego a tiempo.',
+            'Llego danado y el soporte al cliente no respondio a tiempo.',
+            'Buena calidad pero el envio fue mas lento de lo esperado.',
+            'La aplicacion se cierra sola constantemente, muy frustrante.'
+        ],
+        'entidad': ['Producto A', 'Producto A', 'Producto B', 'Producto B']
+    })
+    return plantilla.to_csv(index=False).encode('utf-8')
+
+def mostrar_vista_previa(df):
+    with st.expander("👀 Vista previa de los datos procesados"):
+        columnas_preview = ['fecha', 'entidad', 'rating', 'texto', 'sentimiento']
+        columnas_disponibles = [c for c in columnas_preview if c in df.columns]
+        st.dataframe(df[columnas_disponibles].head(50), use_container_width=True, hide_index=True)
+        st.caption(f"Mostrando las primeras 50 de {len(df):,} filas procesadas.")
+
 # ============================================================
 # ESQUEMA ESTÁNDAR INTERNO: fecha, rating, texto, entidad
 # ============================================================
@@ -450,6 +471,20 @@ if modo == "Ejemplo (Fire Tablet / Echo)":
 
 else:
     st.sidebar.subheader("1. Sube tu archivo")
+
+    with st.sidebar.expander("📋 ¿Cómo debe estructurarse mi archivo?"):
+        st.write("Tu CSV necesita, como mínimo, columnas de fecha, rating y texto de reseña. Los nombres pueden ser distintos — tú los mapeas abajo.")
+        st.dataframe(pd.DataFrame({
+            'fecha': ['2024-01-15', '2024-01-16'],
+            'rating': [5, 2],
+            'texto': ['Excelente producto...', 'Llego danado...'],
+            'entidad': ['Producto A', 'Producto A']
+        }), hide_index=True, use_container_width=True)
+        st.download_button(
+            "⬇️ Descargar plantilla CSV", data=generar_plantilla_csv(),
+            file_name="plantilla_predictify.csv", mime="text/csv", use_container_width=True
+        )
+
     archivo = st.sidebar.file_uploader("Archivo CSV", type="csv")
 
     if archivo:
@@ -497,6 +532,7 @@ st.caption("Radar de Reputación de Producto con Predicción Temprana")
 
 if modo == "Ejemplo (Fire Tablet / Echo)":
     st.info("Mostrando el dataset de ejemplo — Fire Tablet y Echo (Amazon Consumer Reviews).")
+    mostrar_vista_previa(df_final)
     render_dashboard(df_final, paleta_activa)
 else:
     if 'reporte_limpieza' in st.session_state:
@@ -506,5 +542,5 @@ else:
     if df_final is None:
         st.info("⬅️ Sube un archivo CSV, mapea las columnas y presiona 'Procesar y analizar'.")
     else:
-        render_dashboard(df_final, paleta_activa)
-   
+        mostrar_vista_previa(df_final)
+        render_dashboard(df_final, paleta_activa)   

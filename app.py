@@ -7,6 +7,47 @@ import plotly.express as px
 st.set_page_config(page_title="Predictify — Radar de Reputación", layout="wide")
 
 # ============================================================
+# PALETAS DE COLOR
+# ============================================================
+
+PALETAS = {
+    "Slate & Emerald": {
+        "fondo": "#0F172A", "tarjeta": "#1E293B", "texto_sec": "#94A3B8",
+        "primario": "#3B82F6", "acento": "#10B981",
+        "positivo": "#10B981", "negativo": "#F43F5E", "neutro": "#64748B",
+    },
+    "Obsidian & Cyber Gold": {
+        "fondo": "#18181B", "tarjeta": "#27272A", "texto_sec": "#E4E4E7",
+        "primario": "#8B5CF6", "acento": "#F59E0B",
+        "positivo": "#F59E0B", "negativo": "#F43F5E", "neutro": "#71717A",
+    },
+}
+
+def aplicar_tema(paleta):
+    st.markdown(f"""
+        <style>
+        .stApp {{ background-color: {paleta['fondo']}; }}
+        section[data-testid="stSidebar"] {{ background-color: {paleta['tarjeta']}; }}
+        div[data-testid="stMetric"] {{
+            background-color: {paleta['tarjeta']};
+            border: 1px solid {paleta['neutro']}33;
+            border-radius: 10px;
+            padding: 12px;
+        }}
+        div[data-testid="stMetricValue"] {{ color: {paleta['primario']}; }}
+        .stTabs [data-baseweb="tab"] {{ color: {paleta['texto_sec']}; }}
+        .stTabs [aria-selected="true"] {{ color: {paleta['acento']} !important; }}
+        </style>
+    """, unsafe_allow_html=True)
+
+def secuencia_colores(paleta, n=8):
+    base = [paleta['primario'], paleta['acento'], paleta['neutro'], "#94A3B8", "#F97316", "#06B6D4", "#EC4899", "#84CC16"]
+    return base[:n]
+
+def escala_divergente(paleta):
+    return [[0, paleta['negativo']], [0.5, paleta['neutro']], [1, paleta['positivo']]]
+
+# ============================================================
 # ESQUEMA ESTÁNDAR INTERNO: fecha, rating, texto, entidad
 # ============================================================
 
@@ -136,10 +177,10 @@ def calcular_prediccion(semanal, semanas_futuras=4):
     return pred_df, modelo.coef_[0]
 
 # ============================================================
-# KPIs (CORREGIDO: tendencia como banner de ancho completo)
+# KPIs
 # ============================================================
 
-def mostrar_kpis(df, semanal, prediccion_info):
+def mostrar_kpis(df, semanal, prediccion_info, paleta):
     total = len(df)
     rating_prom = df['rating'].mean()
     pct_negativas = (df['rating'] <= 2).mean() * 100
@@ -156,11 +197,18 @@ def mostrar_kpis(df, semanal, prediccion_info):
     if prediccion_info:
         _, pendiente = prediccion_info
         if pendiente > 0.001:
-            st.success("📈 **Tendencia proyectada: Mejorando** — el sentimiento muestra una pendiente positiva en las próximas semanas.")
+            color, icono, texto = paleta['positivo'], "📈", "Mejorando — el sentimiento muestra una pendiente positiva en las próximas semanas."
         elif pendiente < -0.001:
-            st.error("📉 **Tendencia proyectada: Deteriorando** — el sentimiento muestra una pendiente negativa. Vale la pena investigar la causa.")
+            color, icono, texto = paleta['negativo'], "📉", "Deteriorando — el sentimiento muestra una pendiente negativa. Vale la pena investigar la causa."
         else:
-            st.info("➡️ **Tendencia proyectada: Estable** — sin cambios significativos esperados en el corto plazo.")
+            color, icono, texto = paleta['acento'], "➡️", "Estable — sin cambios significativos esperados en el corto plazo."
+
+        st.markdown(f"""
+            <div style="background-color:{color}22; border-left:5px solid {color};
+                        border-radius:8px; padding:14px 18px; font-size:16px;">
+                {icono} <strong>Tendencia proyectada: {texto.split(' — ')[0]}</strong> — {texto.split(' — ')[1]}
+            </div>
+        """, unsafe_allow_html=True)
     else:
         st.info("No hay suficientes semanas de datos (mínimo 5) para proyectar una tendencia.")
 
@@ -168,7 +216,7 @@ def mostrar_kpis(df, semanal, prediccion_info):
 # PESTAÑAS
 # ============================================================
 
-def tab_tendencias(df, semanal, prediccion_info):
+def tab_tendencias(df, semanal, prediccion_info, paleta):
     st.subheader("Evolución del sentimiento en el tiempo")
     entidades = sorted(df['entidad'].unique())
     seleccion = st.multiselect("Filtrar por entidad/producto", entidades,
@@ -181,52 +229,64 @@ def tab_tendencias(df, semanal, prediccion_info):
 
     titulo = ', '.join(seleccion) if len(seleccion) <= 3 else f"{len(seleccion)} entidades"
     fig = px.line(semanal_ent, x='fecha', y='sentimiento', color='entidad', markers=True,
+                  color_discrete_sequence=secuencia_colores(paleta),
                   title=f"Sentimiento promedio semanal — {titulo}",
                   labels={'fecha': 'Semana', 'sentimiento': 'Sentimiento promedio', 'entidad': 'Producto/Empresa'})
-    fig.add_hline(y=0, line_dash="dot", line_color="gray")
+    fig.add_hline(y=0, line_dash="dot", line_color=paleta['neutro'])
+    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
 
     if prediccion_info:
         pred_df, _ = prediccion_info
         fig.add_scatter(x=pred_df['fecha'], y=pred_df['sentimiento_predicho'], mode='lines+markers',
-                        name='Proyección (general)', line=dict(dash='dash', color='red'))
+                        name='Proyección (general)', line=dict(dash='dash', color=paleta['negativo']))
 
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("💡 La línea punteada roja es la proyección del modelo sobre el conjunto general, no solo lo filtrado.")
+    st.caption("💡 La línea punteada es la proyección del modelo sobre el conjunto general, no solo lo filtrado.")
 
     st.subheader("Volumen de reseñas por semana")
-    fig_vol = px.bar(semanal, x='fecha', y='n_reseñas', title="Cantidad de reseñas por semana (conjunto completo)")
+    fig_vol = px.bar(semanal, x='fecha', y='n_reseñas', title="Cantidad de reseñas por semana (conjunto completo)",
+                     color_discrete_sequence=[paleta['primario']])
+    fig_vol.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig_vol, use_container_width=True)
     st.caption("💡 Semanas con muy pocas reseñas pueden generar señales de sentimiento poco confiables.")
 
 
-def tab_distribuciones(df):
+def tab_distribuciones(df, paleta):
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Distribución de ratings")
-        fig = px.histogram(df, x='rating', nbins=5, title="Cantidad de reseñas por rating")
+        fig = px.histogram(df, x='rating', nbins=5, title="Cantidad de reseñas por rating",
+                           color_discrete_sequence=[paleta['primario']])
+        fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
         st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.subheader("Distribución de sentimiento")
-        fig = px.histogram(df, x='sentimiento', nbins=30, title="Distribución del puntaje de sentimiento")
-        fig.add_vline(x=0, line_dash="dot", line_color="gray")
+        fig = px.histogram(df, x='sentimiento', nbins=30, title="Distribución del puntaje de sentimiento",
+                           color_discrete_sequence=[paleta['acento']])
+        fig.add_vline(x=0, line_dash="dot", line_color=paleta['neutro'])
+        fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Longitud del texto según rating")
     df_plot = df.copy()
     df_plot['longitud_texto'] = df_plot['texto'].str.len()
-    fig = px.box(df_plot, x='rating', y='longitud_texto', title="Longitud del texto de reseña por rating")
+    fig = px.box(df_plot, x='rating', y='longitud_texto', title="Longitud del texto de reseña por rating",
+                color_discrete_sequence=[paleta['primario']])
+    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig, use_container_width=True)
     st.caption("💡 Si las reseñas negativas son más largas, sugiere que los clientes insatisfechos dan más contexto.")
 
 
-def tab_correlaciones(df):
+def tab_correlaciones(df, paleta):
     st.subheader("Rating vs. sentimiento del texto")
     df_plot = df.copy()
     df_plot['rating_str'] = df_plot['rating'].round().astype(int).astype(str)
     fig = px.box(df_plot, x='rating_str', y='sentimiento', color='rating_str',
+                color_discrete_sequence=secuencia_colores(paleta, 5),
                 title="Distribución del sentimiento del texto según el rating dado",
                 labels={'rating_str': 'Rating', 'sentimiento': 'Sentimiento del texto'})
-    fig.add_hline(y=0, line_dash="dot", line_color="gray")
+    fig.add_hline(y=0, line_dash="dot", line_color=paleta['neutro'])
+    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig, use_container_width=True)
     st.caption("💡 Cajas que se superponen entre ratings revelan discrepancias entre lo calificado y lo escrito.")
 
@@ -237,25 +297,28 @@ def tab_correlaciones(df):
     st.subheader("Volumen de reseñas vs. sentimiento promedio (por semana)")
     semanal = calcular_tendencia_semanal(df)
     fig2 = px.scatter(semanal, x='n_reseñas', y='sentimiento', size='n_reseñas',
-                      title="¿El volumen de reseñas se relaciona con el sentimiento de esa semana?")
+                      title="¿El volumen de reseñas se relaciona con el sentimiento de esa semana?",
+                      color_discrete_sequence=[paleta['acento']])
+    fig2.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig2, use_container_width=True)
 
 
-def tab_temas(temas_df):
+def tab_temas(temas_df, paleta):
     st.subheader("Temas de queja más frecuentes (en reseñas negativas)")
     if temas_df.empty:
         st.info("No hay suficientes reseñas negativas para detectar temas (mínimo 5).")
         return
 
     fig = px.bar(temas_df.sort_values('frecuencia'), x='frecuencia', y='termino', orientation='h',
-                color='sentimiento_promedio', color_continuous_scale='RdYlGn',
+                color='sentimiento_promedio', color_continuous_scale=escala_divergente(paleta),
                 title="Frecuencia de términos en quejas, coloreado por su sentimiento promedio")
+    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("💡 Rojo = el término aparece en reseñas con sentimiento más negativo dentro del grupo de quejas.")
+    st.caption(f"💡 {paleta['negativo']} = sentimiento más negativo · {paleta['positivo']} = menos negativo dentro del grupo de quejas.")
     st.dataframe(temas_df, use_container_width=True, hide_index=True)
 
 
-def tab_comparativa(df):
+def tab_comparativa(df, paleta):
     top_entidades = df['entidad'].value_counts().head(15).index.tolist()
     seleccion = st.multiselect("Compara entidades/productos", top_entidades,
                                 default=top_entidades[:3] if len(top_entidades) >= 3 else top_entidades,
@@ -276,7 +339,8 @@ def tab_comparativa(df):
     }), use_container_width=True, hide_index=True)
 
     fig = px.bar(resumen, x='entidad', y='pct_negativas', color='sentimiento_promedio',
-                color_continuous_scale='RdYlGn', title="% de reseñas negativas por entidad")
+                color_continuous_scale=escala_divergente(paleta), title="% de reseñas negativas por entidad")
+    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig, use_container_width=True)
 
     df_comp = df[df['entidad'].isin(seleccion)]
@@ -284,26 +348,28 @@ def tab_comparativa(df):
     semanal_comp.columns = ['periodo', 'entidad', 'sentimiento']
     semanal_comp['fecha'] = semanal_comp['periodo'].dt.start_time
     fig2 = px.line(semanal_comp, x='fecha', y='sentimiento', color='entidad', markers=True,
+                  color_discrete_sequence=secuencia_colores(paleta),
                   title="Evolución de sentimiento — comparación entre entidades")
+    fig2.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
     st.plotly_chart(fig2, use_container_width=True)
 
 
-def render_dashboard(df):
+def render_dashboard(df, paleta):
     semanal = calcular_tendencia_semanal(df)
     prediccion_info = calcular_prediccion(semanal)
     temas_df = calcular_temas(df)
 
-    mostrar_kpis(df, semanal, prediccion_info)
+    mostrar_kpis(df, semanal, prediccion_info, paleta)
     st.divider()
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Tendencias", "📊 Distribuciones", "🔗 Correlaciones", "💬 Temas de queja", "⚖️ Comparativa"
     ])
-    with tab1: tab_tendencias(df, semanal, prediccion_info)
-    with tab2: tab_distribuciones(df)
-    with tab3: tab_correlaciones(df)
-    with tab4: tab_temas(temas_df)
-    with tab5: tab_comparativa(df)
+    with tab1: tab_tendencias(df, semanal, prediccion_info, paleta)
+    with tab2: tab_distribuciones(df, paleta)
+    with tab3: tab_correlaciones(df, paleta)
+    with tab4: tab_temas(temas_df, paleta)
+    with tab5: tab_comparativa(df, paleta)
 
 # ============================================================
 # BARRA LATERAL
@@ -313,6 +379,11 @@ st.sidebar.title("📊 Predictify")
 st.sidebar.caption("Radar de Reputación de Producto")
 st.sidebar.divider()
 
+nombre_paleta = st.sidebar.selectbox("🎨 Tema visual", list(PALETAS.keys()))
+paleta_activa = PALETAS[nombre_paleta]
+aplicar_tema(paleta_activa)
+
+st.sidebar.divider()
 modo = st.sidebar.radio("¿Qué quieres ver?", ["Ejemplo (Fire Tablet / Echo)", "Subir mi propio archivo"])
 
 df_final = None
@@ -370,7 +441,7 @@ st.caption("Radar de Reputación de Producto con Predicción Temprana")
 
 if modo == "Ejemplo (Fire Tablet / Echo)":
     st.info("Mostrando el dataset de ejemplo — Fire Tablet y Echo (Amazon Consumer Reviews).")
-    render_dashboard(df_final)
+    render_dashboard(df_final, paleta_activa)
 else:
     if 'reporte_limpieza' in st.session_state:
         with st.expander("🧹 Reporte de limpieza"):
@@ -379,4 +450,4 @@ else:
     if df_final is None:
         st.info("⬅️ Sube un archivo CSV, mapea las columnas y presiona 'Procesar y analizar'.")
     else:
-        render_dashboard(df_final)
+        render_dashboard(df_final, paleta_activa)

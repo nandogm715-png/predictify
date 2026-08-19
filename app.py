@@ -11,41 +11,87 @@ st.set_page_config(page_title="Predictify — Radar de Reputación", layout="wid
 # ============================================================
 
 PALETAS = {
-    "Slate & Emerald": {
-        "fondo": "#0F172A", "tarjeta": "#1E293B", "texto_sec": "#94A3B8",
+    "Slate & Emerald (Claro)": {
+        "fondo": "#F8FAFC", "tarjeta": "#FFFFFF",
+        "texto_principal": "#0F172A", "texto_sec": "#64748B",
         "primario": "#3B82F6", "acento": "#10B981",
-        "positivo": "#10B981", "negativo": "#F43F5E", "neutro": "#64748B",
+        "positivo": "#10B981", "negativo": "#F43F5E", "neutro": "#94A3B8",
     },
-    "Obsidian & Cyber Gold": {
-        "fondo": "#18181B", "tarjeta": "#27272A", "texto_sec": "#E4E4E7",
+    "Obsidian & Cyber Gold (Oscuro)": {
+        "fondo": "#18181B", "tarjeta": "#27272A",
+        "texto_principal": "#F4F4F5", "texto_sec": "#A1A1AA",
         "primario": "#8B5CF6", "acento": "#F59E0B",
         "positivo": "#F59E0B", "negativo": "#F43F5E", "neutro": "#71717A",
     },
 }
 
-def aplicar_tema(paleta):
+def aplicar_tema(p):
     st.markdown(f"""
         <style>
-        .stApp {{ background-color: {paleta['fondo']}; }}
-        section[data-testid="stSidebar"] {{ background-color: {paleta['tarjeta']}; }}
-        div[data-testid="stMetric"] {{
-            background-color: {paleta['tarjeta']};
-            border: 1px solid {paleta['neutro']}33;
-            border-radius: 10px;
-            padding: 12px;
+        .stApp {{
+            background-color: {p['fondo']} !important;
+            color: {p['texto_principal']} !important;
         }}
-        div[data-testid="stMetricValue"] {{ color: {paleta['primario']}; }}
-        .stTabs [data-baseweb="tab"] {{ color: {paleta['texto_sec']}; }}
-        .stTabs [aria-selected="true"] {{ color: {paleta['acento']} !important; }}
+        section[data-testid="stSidebar"] {{
+            background-color: {p['tarjeta']} !important;
+            border-right: 1px solid {p['neutro']}33;
+        }}
+        section[data-testid="stSidebar"] * {{
+            color: {p['texto_principal']} !important;
+        }}
+        h1, h2, h3, h4, h5, h6, p, span, label, li {{
+            color: {p['texto_principal']} !important;
+        }}
+        div[data-testid="stCaptionContainer"], .stCaption {{
+            color: {p['texto_sec']} !important;
+        }}
+        div[data-testid="stMetric"] {{
+            background-color: {p['tarjeta']};
+            border: 1px solid {p['neutro']}44;
+            border-radius: 10px;
+            padding: 14px;
+        }}
+        div[data-testid="stMetricValue"] {{ color: {p['primario']} !important; }}
+        div[data-testid="stMetricLabel"] {{ color: {p['texto_sec']} !important; }}
+        .stTabs [data-baseweb="tab-list"] {{
+            background-color: {p['tarjeta']};
+            border-radius: 8px;
+            padding: 4px;
+        }}
+        .stTabs [data-baseweb="tab"] {{ color: {p['texto_sec']} !important; }}
+        .stTabs [aria-selected="true"] {{
+            color: {p['acento']} !important;
+            font-weight: 600;
+        }}
+        div[data-testid="stExpander"] {{
+            background-color: {p['tarjeta']};
+            border: 1px solid {p['neutro']}33;
+            border-radius: 8px;
+        }}
+        div[data-baseweb="select"] > div {{
+            background-color: {p['tarjeta']} !important;
+            color: {p['texto_principal']} !important;
+        }}
+        thead, tbody, th, td {{ color: {p['texto_principal']} !important; }}
         </style>
     """, unsafe_allow_html=True)
 
-def secuencia_colores(paleta, n=8):
-    base = [paleta['primario'], paleta['acento'], paleta['neutro'], "#94A3B8", "#F97316", "#06B6D4", "#EC4899", "#84CC16"]
+def secuencia_colores(p, n=8):
+    base = [p['primario'], p['acento'], p['neutro'], "#94A3B8", "#F97316", "#06B6D4", "#EC4899", "#84CC16"]
     return base[:n]
 
-def escala_divergente(paleta):
-    return [[0, paleta['negativo']], [0.5, paleta['neutro']], [1, paleta['positivo']]]
+def escala_divergente(p):
+    return [[0, p['negativo']], [0.5, p['neutro']], [1, p['positivo']]]
+
+def aplicar_layout_grafico(fig, p):
+    fig.update_layout(
+        plot_bgcolor=p['fondo'], paper_bgcolor=p['fondo'],
+        font_color=p['texto_principal'],
+        legend=dict(font=dict(color=p['texto_principal'])),
+    )
+    fig.update_xaxes(gridcolor=f"{p['neutro']}33", color=p['texto_principal'])
+    fig.update_yaxes(gridcolor=f"{p['neutro']}33", color=p['texto_principal'])
+    return fig
 
 # ============================================================
 # ESQUEMA ESTÁNDAR INTERNO: fecha, rating, texto, entidad
@@ -180,7 +226,7 @@ def calcular_prediccion(semanal, semanas_futuras=4):
 # KPIs
 # ============================================================
 
-def mostrar_kpis(df, semanal, prediccion_info, paleta):
+def mostrar_kpis(df, semanal, prediccion_info, p):
     total = len(df)
     rating_prom = df['rating'].mean()
     pct_negativas = (df['rating'] <= 2).mean() * 100
@@ -197,16 +243,16 @@ def mostrar_kpis(df, semanal, prediccion_info, paleta):
     if prediccion_info:
         _, pendiente = prediccion_info
         if pendiente > 0.001:
-            color, icono, texto = paleta['positivo'], "📈", "Mejorando — el sentimiento muestra una pendiente positiva en las próximas semanas."
+            color, icono, titulo, detalle = p['positivo'], "📈", "Mejorando", "el sentimiento muestra una pendiente positiva en las próximas semanas."
         elif pendiente < -0.001:
-            color, icono, texto = paleta['negativo'], "📉", "Deteriorando — el sentimiento muestra una pendiente negativa. Vale la pena investigar la causa."
+            color, icono, titulo, detalle = p['negativo'], "📉", "Deteriorando", "el sentimiento muestra una pendiente negativa. Vale la pena investigar la causa."
         else:
-            color, icono, texto = paleta['acento'], "➡️", "Estable — sin cambios significativos esperados en el corto plazo."
+            color, icono, titulo, detalle = p['acento'], "➡️", "Estable", "sin cambios significativos esperados en el corto plazo."
 
         st.markdown(f"""
-            <div style="background-color:{color}22; border-left:5px solid {color};
-                        border-radius:8px; padding:14px 18px; font-size:16px;">
-                {icono} <strong>Tendencia proyectada: {texto.split(' — ')[0]}</strong> — {texto.split(' — ')[1]}
+            <div style="background-color:{color}1A; border-left:5px solid {color};
+                        border-radius:8px; padding:14px 18px; font-size:16px; color:{p['texto_principal']};">
+                {icono} <strong>Tendencia proyectada: {titulo}</strong> — {detalle}
             </div>
         """, unsafe_allow_html=True)
     else:
@@ -216,7 +262,7 @@ def mostrar_kpis(df, semanal, prediccion_info, paleta):
 # PESTAÑAS
 # ============================================================
 
-def tab_tendencias(df, semanal, prediccion_info, paleta):
+def tab_tendencias(df, semanal, prediccion_info, p):
     st.subheader("Evolución del sentimiento en el tiempo")
     entidades = sorted(df['entidad'].unique())
     seleccion = st.multiselect("Filtrar por entidad/producto", entidades,
@@ -229,64 +275,64 @@ def tab_tendencias(df, semanal, prediccion_info, paleta):
 
     titulo = ', '.join(seleccion) if len(seleccion) <= 3 else f"{len(seleccion)} entidades"
     fig = px.line(semanal_ent, x='fecha', y='sentimiento', color='entidad', markers=True,
-                  color_discrete_sequence=secuencia_colores(paleta),
+                  color_discrete_sequence=secuencia_colores(p),
                   title=f"Sentimiento promedio semanal — {titulo}",
                   labels={'fecha': 'Semana', 'sentimiento': 'Sentimiento promedio', 'entidad': 'Producto/Empresa'})
-    fig.add_hline(y=0, line_dash="dot", line_color=paleta['neutro'])
-    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+    fig.add_hline(y=0, line_dash="dot", line_color=p['neutro'])
 
     if prediccion_info:
         pred_df, _ = prediccion_info
         fig.add_scatter(x=pred_df['fecha'], y=pred_df['sentimiento_predicho'], mode='lines+markers',
-                        name='Proyección (general)', line=dict(dash='dash', color=paleta['negativo']))
+                        name='Proyección (general)', line=dict(dash='dash', color=p['negativo']))
 
+    fig = aplicar_layout_grafico(fig, p)
     st.plotly_chart(fig, use_container_width=True)
     st.caption("💡 La línea punteada es la proyección del modelo sobre el conjunto general, no solo lo filtrado.")
 
     st.subheader("Volumen de reseñas por semana")
     fig_vol = px.bar(semanal, x='fecha', y='n_reseñas', title="Cantidad de reseñas por semana (conjunto completo)",
-                     color_discrete_sequence=[paleta['primario']])
-    fig_vol.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+                     color_discrete_sequence=[p['primario']])
+    fig_vol = aplicar_layout_grafico(fig_vol, p)
     st.plotly_chart(fig_vol, use_container_width=True)
     st.caption("💡 Semanas con muy pocas reseñas pueden generar señales de sentimiento poco confiables.")
 
 
-def tab_distribuciones(df, paleta):
+def tab_distribuciones(df, p):
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Distribución de ratings")
         fig = px.histogram(df, x='rating', nbins=5, title="Cantidad de reseñas por rating",
-                           color_discrete_sequence=[paleta['primario']])
-        fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+                           color_discrete_sequence=[p['primario']])
+        fig = aplicar_layout_grafico(fig, p)
         st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.subheader("Distribución de sentimiento")
         fig = px.histogram(df, x='sentimiento', nbins=30, title="Distribución del puntaje de sentimiento",
-                           color_discrete_sequence=[paleta['acento']])
-        fig.add_vline(x=0, line_dash="dot", line_color=paleta['neutro'])
-        fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+                           color_discrete_sequence=[p['acento']])
+        fig.add_vline(x=0, line_dash="dot", line_color=p['neutro'])
+        fig = aplicar_layout_grafico(fig, p)
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Longitud del texto según rating")
     df_plot = df.copy()
     df_plot['longitud_texto'] = df_plot['texto'].str.len()
     fig = px.box(df_plot, x='rating', y='longitud_texto', title="Longitud del texto de reseña por rating",
-                color_discrete_sequence=[paleta['primario']])
-    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+                color_discrete_sequence=[p['primario']])
+    fig = aplicar_layout_grafico(fig, p)
     st.plotly_chart(fig, use_container_width=True)
     st.caption("💡 Si las reseñas negativas son más largas, sugiere que los clientes insatisfechos dan más contexto.")
 
 
-def tab_correlaciones(df, paleta):
+def tab_correlaciones(df, p):
     st.subheader("Rating vs. sentimiento del texto")
     df_plot = df.copy()
     df_plot['rating_str'] = df_plot['rating'].round().astype(int).astype(str)
     fig = px.box(df_plot, x='rating_str', y='sentimiento', color='rating_str',
-                color_discrete_sequence=secuencia_colores(paleta, 5),
+                color_discrete_sequence=secuencia_colores(p, 5),
                 title="Distribución del sentimiento del texto según el rating dado",
                 labels={'rating_str': 'Rating', 'sentimiento': 'Sentimiento del texto'})
-    fig.add_hline(y=0, line_dash="dot", line_color=paleta['neutro'])
-    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+    fig.add_hline(y=0, line_dash="dot", line_color=p['neutro'])
+    fig = aplicar_layout_grafico(fig, p)
     st.plotly_chart(fig, use_container_width=True)
     st.caption("💡 Cajas que se superponen entre ratings revelan discrepancias entre lo calificado y lo escrito.")
 
@@ -298,27 +344,27 @@ def tab_correlaciones(df, paleta):
     semanal = calcular_tendencia_semanal(df)
     fig2 = px.scatter(semanal, x='n_reseñas', y='sentimiento', size='n_reseñas',
                       title="¿El volumen de reseñas se relaciona con el sentimiento de esa semana?",
-                      color_discrete_sequence=[paleta['acento']])
-    fig2.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+                      color_discrete_sequence=[p['acento']])
+    fig2 = aplicar_layout_grafico(fig2, p)
     st.plotly_chart(fig2, use_container_width=True)
 
 
-def tab_temas(temas_df, paleta):
+def tab_temas(temas_df, p):
     st.subheader("Temas de queja más frecuentes (en reseñas negativas)")
     if temas_df.empty:
         st.info("No hay suficientes reseñas negativas para detectar temas (mínimo 5).")
         return
 
     fig = px.bar(temas_df.sort_values('frecuencia'), x='frecuencia', y='termino', orientation='h',
-                color='sentimiento_promedio', color_continuous_scale=escala_divergente(paleta),
+                color='sentimiento_promedio', color_continuous_scale=escala_divergente(p),
                 title="Frecuencia de términos en quejas, coloreado por su sentimiento promedio")
-    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+    fig = aplicar_layout_grafico(fig, p)
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"💡 {paleta['negativo']} = sentimiento más negativo · {paleta['positivo']} = menos negativo dentro del grupo de quejas.")
+    st.caption("💡 El color va de negativo (rojo) a positivo (verde/ámbar), según el sentimiento promedio de las reseñas donde aparece el término.")
     st.dataframe(temas_df, use_container_width=True, hide_index=True)
 
 
-def tab_comparativa(df, paleta):
+def tab_comparativa(df, p):
     top_entidades = df['entidad'].value_counts().head(15).index.tolist()
     seleccion = st.multiselect("Compara entidades/productos", top_entidades,
                                 default=top_entidades[:3] if len(top_entidades) >= 3 else top_entidades,
@@ -339,8 +385,8 @@ def tab_comparativa(df, paleta):
     }), use_container_width=True, hide_index=True)
 
     fig = px.bar(resumen, x='entidad', y='pct_negativas', color='sentimiento_promedio',
-                color_continuous_scale=escala_divergente(paleta), title="% de reseñas negativas por entidad")
-    fig.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+                color_continuous_scale=escala_divergente(p), title="% de reseñas negativas por entidad")
+    fig = aplicar_layout_grafico(fig, p)
     st.plotly_chart(fig, use_container_width=True)
 
     df_comp = df[df['entidad'].isin(seleccion)]
@@ -348,28 +394,28 @@ def tab_comparativa(df, paleta):
     semanal_comp.columns = ['periodo', 'entidad', 'sentimiento']
     semanal_comp['fecha'] = semanal_comp['periodo'].dt.start_time
     fig2 = px.line(semanal_comp, x='fecha', y='sentimiento', color='entidad', markers=True,
-                  color_discrete_sequence=secuencia_colores(paleta),
+                  color_discrete_sequence=secuencia_colores(p),
                   title="Evolución de sentimiento — comparación entre entidades")
-    fig2.update_layout(plot_bgcolor=paleta['fondo'], paper_bgcolor=paleta['fondo'], font_color=paleta['texto_sec'])
+    fig2 = aplicar_layout_grafico(fig2, p)
     st.plotly_chart(fig2, use_container_width=True)
 
 
-def render_dashboard(df, paleta):
+def render_dashboard(df, p):
     semanal = calcular_tendencia_semanal(df)
     prediccion_info = calcular_prediccion(semanal)
     temas_df = calcular_temas(df)
 
-    mostrar_kpis(df, semanal, prediccion_info, paleta)
+    mostrar_kpis(df, semanal, prediccion_info, p)
     st.divider()
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Tendencias", "📊 Distribuciones", "🔗 Correlaciones", "💬 Temas de queja", "⚖️ Comparativa"
     ])
-    with tab1: tab_tendencias(df, semanal, prediccion_info, paleta)
-    with tab2: tab_distribuciones(df, paleta)
-    with tab3: tab_correlaciones(df, paleta)
-    with tab4: tab_temas(temas_df, paleta)
-    with tab5: tab_comparativa(df, paleta)
+    with tab1: tab_tendencias(df, semanal, prediccion_info, p)
+    with tab2: tab_distribuciones(df, p)
+    with tab3: tab_correlaciones(df, p)
+    with tab4: tab_temas(temas_df, p)
+    with tab5: tab_comparativa(df, p)
 
 # ============================================================
 # BARRA LATERAL

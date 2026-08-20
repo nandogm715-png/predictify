@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -126,17 +125,68 @@ def mostrar_vista_previa(df):
 # ============================================================
 
 @st.cache_resource
-def cargar_stopwords():
+def cargar_stopwords(idioma='en'):
     import nltk
     nltk.download('stopwords', quiet=True)
     from nltk.corpus import stopwords
-    return set(stopwords.words('english'))
+    mapa = {'es': 'spanish', 'en': 'english'}
+    base = set(stopwords.words(mapa.get(idioma, 'english')))
+    if idioma == 'en':
+        # contracciones sin apostrofe que se cuelan tras limpiar el texto
+        base |= {'dont', 'cant', 'wont', 'isnt', 'arent', 'wasnt', 'werent',
+                 'didnt', 'doesnt', 'couldnt', 'shouldnt', 'wouldnt',
+                 'im', 'ive', 'youre', 'theyre', 'get', 'got', 'one', 'would'}
+    return base
 
 def limpiar_texto(texto, stop_words):
     texto = str(texto).lower()
-    texto = re.sub(r'[^a-z\s]', '', texto)
+    texto = re.sub(r'[^a-zà-ÿ\s]', '', texto)  # conserva tildes y ñ para español
     palabras = [p for p in texto.split() if p not in stop_words]
     return ' '.join(palabras)
+
+# ---- Lexicon compacto de sentimiento en espanol (metodo hibrido) ----
+LEXICON_ES_POS = {
+    'excelente','bueno','buena','buenos','buenas','genial','increible','perfecto','perfecta',
+    'recomendado','recomendable','recomiendo','rapido','rapida','comodo','comoda','util','resistente',
+    'adecuado','adecuada','satisfecho','satisfecha','encantado','encantada','fantastico','fantastica',
+    'maravilloso','maravillosa','agradable','eficiente','practico','practica','bonito','bonita',
+    'calidad','funciona','cumple','feliz','contento','contenta','economico','economica','vale','facil'
+}
+LEXICON_ES_NEG = {
+    'malo','mala','malos','malas','terrible','pesimo','pesima','horrible','defectuoso','defectuosa',
+    'danado','danada','roto','rota','lento','lenta','decepcionante','decepcionado','decepcionada',
+    'problema','problemas','falla','fallas','falta','insatisfecho','insatisfecha','devolvi','devuelto',
+    'reembolso','queja','quejas','nunca','tarde','demora','demorado','caro','cara','inutil','deficiente',
+    'mediocre','regular','escaso','escasa','incomodo','incomoda','frustrante','molesto','molesta',
+    'engano','estafa','basura','pobre'
+}
+
+def sentimiento_espanol(texto_limpio):
+    palabras = texto_limpio.split()
+    pos = sum(1 for p in palabras if p in LEXICON_ES_POS)
+    neg = sum(1 for p in palabras if p in LEXICON_ES_NEG)
+    total = pos + neg
+    if total == 0:
+        return 0.0
+    return (pos - neg) / total
+
+def detectar_idioma_dataset(df, columna='texto', muestra=50):
+    try:
+        from langdetect import detect, DetectorFactory
+        DetectorFactory.seed = 0
+    except ImportError:
+        return 'en'
+    textos = df[columna].dropna().astype(str)
+    textos = textos[textos.str.len() > 10].head(muestra)
+    idiomas = []
+    for t in textos:
+        try:
+            idiomas.append(detect(t))
+        except Exception:
+            continue
+    if not idiomas:
+        return 'en'
+    return pd.Series(idiomas).mode().iloc[0]
 
 def sugerir_columna(df, palabras_clave, tipo_esperado=None):
     columnas = list(df.columns)
@@ -171,7 +221,7 @@ def limpiar_dataset_inteligente(df):
     if df['rating'].notna().sum() > 0:
         max_rating = df['rating'].max()
         if max_rating > 5:
-            df['rating'] = (max_rating / df['rating'] ) * 5
+            df['rating'] = (df['rating'] / max_rating) * 5
             reporte.append(f"Rating detectado en escala 0-{int(max_rating)}, normalizado a escala 1-5")
 
     pct_texto_unico = df['texto'].nunique() / max(len(df), 1)
@@ -197,24 +247,39 @@ def limpiar_dataset_inteligente(df):
 
 @st.cache_data(show_spinner=False)
 def calcular_sentimiento(df):
-    from textblob import TextBlob
-    stop_words = cargar_stopwords()
     df = df.copy()
+    idioma = detectar_idioma_dataset(df)
+    stop_words = cargar_stopwords(idioma)
     df['texto_limpio'] = df['texto'].apply(lambda t: limpiar_texto(t, stop_words))
-    df['sentimiento'] = df['texto_limpio'].apply(lambda t: TextBlob(t).sentiment.polarity)
+
+    if idioma == 'es':
+        df['sentimiento'] = df['texto_limpio'].apply(sentimiento_espanol)
+    else:
+        from textblob import TextBlob
+        df['sentimiento'] = df['texto_limpio'].apply(lambda t: TextBlob(t).sentiment.polarity)
+
+    df.attrs['idioma_detectado'] = idioma
     return df
 
 @st.cache_data(show_spinner=False)
 def calcular_temas(df, min_negativas=5, max_temas=15):
     from sklearn.feature_extraction.text import TfidfVectorizer
     negativas = df[df['rating'] <= 2]
+    cols_vacias = ['termino', 'frecuencia', 'sentimiento_promedio', 'satisfaccion']
     if len(negativas) < min_negativas:
-        return pd.DataFrame(columns=['termino', 'frecuencia', 'sentimiento_promedio'])
+        return pd.DataFrame(columns=cols_vacias)
 
-    vec = TfidfVectorizer(max_features=max_temas, ngram_range=(1, 2))
-    matriz = vec.fit_transform(negativas['texto_limpio'])
-    terminos = vec.get_feature_names_out()
-    frecuencias = matriz.sum(axis=0).A1
+    # TF-IDF en vez de conteo bruto: reduce el peso de palabras omnipresentes
+    # (ej. "customer", "service") y resalta terminos realmente distintivos de las quejas.
+    vec = TfidfVectorizer(max_features=max_temas, ngram_range=(1, 2), min_df=2)
+    try:
+        matriz = vec.fit_transform(negativas['texto_limpio'])
+        terminos = vec.get_feature_names_out()
+    except ValueError:
+        return pd.DataFrame(columns=cols_vacias)
+
+    if len(terminos) == 0:
+        return pd.DataFrame(columns=cols_vacias)
 
     def clasificar_satisfaccion(sentimiento):
         if pd.isna(sentimiento):
@@ -229,12 +294,13 @@ def calcular_temas(df, min_negativas=5, max_temas=15):
             return "☹️ Insatisfecho"
 
     filas = []
-    for termino, freq in zip(terminos, frecuencias):
+    for termino in terminos:
         mask = negativas['texto_limpio'].str.contains(termino, regex=False)
+        frecuencia = int(mask.sum())
         sentimiento_prom = negativas.loc[mask, 'sentimiento'].mean()
         filas.append({
             'termino': termino,
-            'frecuencia': int(freq),
+            'frecuencia': frecuencia,
             'sentimiento_promedio': sentimiento_prom,
             'satisfaccion': clasificar_satisfaccion(sentimiento_prom)
         })
@@ -561,5 +627,5 @@ else:
         render_dashboard(df_final, paleta_activa)
 
 
-
-
+ 
+    

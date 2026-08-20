@@ -170,7 +170,7 @@ def limpiar_dataset_inteligente(df):
     if df['rating'].notna().sum() > 0:
         max_rating = df['rating'].max()
         if max_rating > 5:
-            df['rating'] = (df['rating'] / max_rating) * 5
+            df['rating'] = (max_rating / df['rating'] ) * 5
             reporte.append(f"Rating detectado en escala 0-{int(max_rating)}, normalizado a escala 1-5")
 
     pct_texto_unico = df['texto'].nunique() / max(len(df), 1)

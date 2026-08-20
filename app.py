@@ -206,12 +206,12 @@ def calcular_sentimiento(df):
 
 @st.cache_data(show_spinner=False)
 def calcular_temas(df, min_negativas=5, max_temas=15):
-    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.feature_extraction.text import TfidfVectorizer
     negativas = df[df['rating'] <= 2]
     if len(negativas) < min_negativas:
         return pd.DataFrame(columns=['termino', 'frecuencia', 'sentimiento_promedio'])
 
-    vec = CountVectorizer(max_features=max_temas, ngram_range=(1, 2))
+    vec = TfidfVectorizer(max_features=max_temas, ngram_range=(1, 2))
     matriz = vec.fit_transform(negativas['texto_limpio'])
     terminos = vec.get_feature_names_out()
     frecuencias = matriz.sum(axis=0).A1

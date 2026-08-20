@@ -560,45 +560,6 @@ else:
         mostrar_vista_previa(df_final)
         render_dashboard(df_final, paleta_activa)
 
-@st.cache_data(show_spinner=False)
-def calcular_sentimiento_hibrido(df):
-    from textblob import TextBlob
-    stop_words = cargar_stopwords()
-    df = df.copy()
-    
-    # 1. Limpieza
-    df['texto_limpio'] = df['texto'].apply(lambda t: limpiar_texto(t, stop_words))
-    
-    # 2. Sentimiento base de texto (-1 a 1)
-    df['sent_text'] = df['texto_limpio'].apply(lambda t: TextBlob(t).sentiment.polarity)
-    
-    # 3. Normalizar rating a rango (-1 a 1)
-    # (Rating 1->-1, 2->-0.5, 3->0, 4->0.5, 5->1)
-    df['sent_rating'] = (df['rating'] - 3) / 2
-    
-    # 4. Sentimiento Híbrido (Weighted Average)
-    # Damos 60% peso al Rating (hecho objetivo) y 40% al Texto (análisis semántico)
-    df['sentimiento'] = (df['sent_rating'] * 0.6) + (df['sent_text'] * 0.4)
-    
-    return df
-    # Puedes agregar esta función a tu código
-def asignar_categoria(texto):
-    texto = texto.lower()
-    categorias = {
-        "📦 Logística / Envío": ["envio", "entrega", "tarde", "lento", "tiempo", "paquete", "correo"],
-        "🛠 Calidad / Producto": ["calidad", "funciona", "roto", "fallo", "material", "duradero", "dañado"],
-        "🎧 Soporte / Atención": ["soporte", "cliente", "atencion", "respuesta", "ayuda", "contacto"],
-        "💰 Precio / Valor": ["precio", "caro", "barato", "valor", "oferta", "costoso"],
-        "📱 Interfaz / App": ["app", "aplicacion", "cierra", "configuracion", "interfaz", "menu"]
-    }
-    
-    for categoria, palabras in categorias.items():
-        if any(palabra in texto for palabra in palabras):
-            return categoria
-    return "💡 Otros"
 
-# En tu función de procesamiento principal
-def procesar_datos_completos(df):
-    df = calcular_sentimiento_hibrido(df) # La que creamos en el paso anterior
-    df['categoria'] = df['texto'].apply(asignar_categoria)
-    return df
+
+

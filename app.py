@@ -508,6 +508,77 @@ def tab_comparativa(df, p):
     st.plotly_chart(fig2, use_container_width=True)
 
 
+def clasificar_con_groq_batch(textos, api_key, modelo="openai/gpt-oss-20b", batch_size=20):
+    import requests, json
+    categorias_validas = ["Muy positivo", "Positivo", "Neutral", "Negativo", "Muy negativo"]
+    resultados = []
+
+    for i in range(0, len(textos), batch_size):
+        lote = textos[i:i + batch_size]
+        lista_numerada = "\n".join([f"{j+1}. {str(t)[:400]}" for j, t in enumerate(lote)])
+
+        prompt = (
+            "Clasifica el sentimiento de la percepcion de compra en cada reseña numerada, "
+            "usando EXACTAMENTE una de estas 5 categorias: Muy positivo, Positivo, Neutral, Negativo, Muy negativo.\n\n"
+            f"{lista_numerada}\n\n"
+            'Responde SOLO con JSON valido en este formato: {"clasificaciones": ["categoria1", "categoria2", ...]} '
+            "con exactamente una categoria por cada reseña numerada, en el mismo orden, sin texto adicional."
+        )
+
+        respuesta = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": modelo,
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"},
+                "temperature": 0,
+            },
+            timeout=30,
+        )
+        respuesta.raise_for_status()
+        contenido_resp = respuesta.json()["choices"][0]["message"]["content"]
+        data = json.loads(contenido_resp)
+        clasificaciones = data.get("clasificaciones", [])
+
+        for j in range(len(lote)):
+            if j < len(clasificaciones) and clasificaciones[j] in categorias_validas:
+                resultados.append(clasificaciones[j])
+            else:
+                resultados.append("Neutral")
+
+    return resultados
+
+
+def tab_ia_groq(p):
+    st.subheader("Clasificación de sentimiento con IA (Groq)")
+    st.caption("Clasifica la percepción de compra en 5 categorías usando un modelo de lenguaje, como capa adicional al análisis lexicón/TextBlob de las otras pestañas.")
+
+    if 'resultado_ia' not in st.session_state:
+        st.info("⬅️ Ve a la barra lateral → '4. IA (opcional)' → configura y presiona 'Clasificar con IA' para ver resultados aquí.")
+        return
+
+    df_ia = st.session_state['resultado_ia']
+    orden = ["Muy negativo", "Negativo", "Neutral", "Positivo", "Muy positivo"]
+    mapa_color = {
+        "Muy negativo": p['negativo'], "Negativo": p['negativo'],
+        "Neutral": p['neutro'],
+        "Positivo": p['positivo'], "Muy positivo": p['positivo'],
+    }
+
+    conteo = df_ia['categoria_ia'].value_counts().reindex(orden).fillna(0).reset_index()
+    conteo.columns = ['categoria', 'cantidad']
+
+    fig = px.bar(conteo, x='categoria', y='cantidad', color='categoria',
+                color_discrete_map=mapa_color, category_orders={'categoria': orden},
+                title=f"Distribución de sentimiento percibido de compra ({len(df_ia)} reseñas analizadas con IA)")
+    fig = aplicar_layout_grafico(fig, p)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(df_ia[['texto', 'categoria_ia']].head(50), use_container_width=True, hide_index=True)
+    st.caption("Mostrando hasta 50 reseñas de muestra con su clasificación.")
+
+
 def render_dashboard(df, p):
     semanal = calcular_tendencia_semanal(df)
     prediccion_info = calcular_prediccion(semanal)
@@ -516,14 +587,15 @@ def render_dashboard(df, p):
     mostrar_kpis(df, semanal, prediccion_info, p)
     st.divider()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📈 Tendencias", "📊 Distribuciones", "🔗 Correlaciones", "💬 Temas de queja", "⚖️ Comparativa"
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📈 Tendencias", "📊 Distribuciones", "🔗 Correlaciones", "💬 Temas de queja", "⚖️ Comparativa", "🤖 IA (Groq)"
     ])
     with tab1: tab_tendencias(df, semanal, prediccion_info, p)
     with tab2: tab_distribuciones(df, p)
     with tab3: tab_correlaciones(df, p)
     with tab4: tab_temas(temas_df, p)
     with tab5: tab_comparativa(df, p)
+    with tab6: tab_ia_groq(p)
 
 # ============================================================
 # BARRA LATERAL
@@ -604,6 +676,39 @@ else:
     if st.session_state.get('df_procesado') is not None:
         df_final = st.session_state['df_procesado']
 
+        st.sidebar.subheader("4. IA (opcional)")
+        with st.sidebar.expander("🤖 Clasificación con IA (Groq)"):
+            st.caption("Clasifica el sentimiento de la compra en 5 categorías usando un modelo de lenguaje (Groq). Requiere tu propia API key configurada en los Secrets de Streamlit Cloud (GROQ_API_KEY).")
+
+            opciones_titulo = ["(Ninguna)"] + list(df_nuevo.columns)
+            sug_titulo = sugerir_columna(df_nuevo, ['title', 'titulo', 'asunto'])
+            idx_sug = opciones_titulo.index(sug_titulo) if sug_titulo in opciones_titulo else 0
+            col_titulo_sel = st.selectbox("Columna de título (opcional, se combina con el texto)", opciones_titulo, index=idx_sug)
+
+            n_max = st.slider("Cantidad de reseñas a clasificar", 20, 300, 100, step=20,
+                              help="Limitado por el nivel gratuito de Groq (rate limits). Menos reseñas = más rápido y seguro.")
+
+            if st.button("🤖 Clasificar con IA", use_container_width=True):
+                api_key = st.secrets.get("GROQ_API_KEY", None)
+                if not api_key:
+                    st.error("Falta configurar GROQ_API_KEY en Settings → Secrets de tu app en Streamlit Cloud.")
+                else:
+                    df_ia = df_final.head(n_max).copy()
+                    if col_titulo_sel != "(Ninguna)":
+                        titulos = df_nuevo.loc[df_ia.index, col_titulo_sel].astype(str)
+                        textos_combinados = (titulos + ". " + df_ia['texto'].astype(str)).tolist()
+                    else:
+                        textos_combinados = df_ia['texto'].astype(str).tolist()
+
+                    with st.spinner(f"Clasificando {len(textos_combinados)} reseñas con IA..."):
+                        try:
+                            categorias = clasificar_con_groq_batch(textos_combinados, api_key)
+                            df_ia['categoria_ia'] = categorias
+                            st.session_state['resultado_ia'] = df_ia
+                            st.success("Clasificación completada — revisa la pestaña '🤖 IA (Groq)'.")
+                        except Exception as e:
+                            st.error(f"Error al llamar a la API de Groq: {e}")
+
 # ============================================================
 # ÁREA PRINCIPAL
 # ============================================================
@@ -625,7 +730,3 @@ else:
     else:
         mostrar_vista_previa(df_final)
         render_dashboard(df_final, paleta_activa)
-
-
- 
-    

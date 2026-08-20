@@ -1,8 +1,8 @@
 streamlit
 pandas
 scikit-learn
-nltk 
-textblob  
+nltk
+textblob
 numpy
 plotly
 langdetect
